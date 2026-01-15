@@ -37,5 +37,5 @@
 	 * Service Bindings (communicate between multiple Workers)
 	 * https://developers.cloudflare.com/workers/wrangler/configuration/#service-bindings
 	 */
-	"services": [  {   "binding": "R2",   "service": "skyinnk-r2"  } ]
+	"r2_buckets": [{ "binding": "R2", "bucket_name": "skyinnk-r2" }]
 }
