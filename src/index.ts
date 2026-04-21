@@ -1,22 +1,12 @@
-/**
- * Welcome to Cloudflare Workers! This is your first worker.
- *
- * - Run `npm run dev` in your terminal to start a development server
- * - Open a browser tab at http://localhost:8787/ to see your worker in action
- * - Run `npm run deploy` to publish your worker
- *
- * Bind resources to your worker in `wrangler.jsonc`. After adding bindings, a type definition for the
- * `Env` object can be regenerated with `npm run cf-typegen`.
- *
- * Learn more at https://developers.cloudflare.com/workers/
- */
-
 export interface Env {
 	R2: R2Bucket;
 }
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024;
+
 const ALLOWED_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'application/pdf', 'text/plain']);
+
+const IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
 
 export default {
 	async fetch(req: Request, env: Env): Promise<Response> {
@@ -53,9 +43,7 @@ export default {
 					const size = parseInt(contentLength, 10);
 
 					if (isNaN(size) || size > MAX_FILE_SIZE) {
-						return new Response('File too large', {
-							status: 413,
-						});
+						return new Response('File too large', { status: 413 });
 					}
 				} else {
 					const reader = bodyForCheck.getReader();
@@ -83,16 +71,12 @@ export default {
 				}
 
 				await env.R2.put(key, bodyForUpload, {
-					httpMetadata: {
-						contentType,
-					},
+					httpMetadata: { contentType },
 				});
 
 				return new Response('Uploaded', {
 					status: 201,
-					headers: {
-						'Cache-Control': 'no-store',
-					},
+					headers: { 'Cache-Control': 'no-store' },
 				});
 			}
 
@@ -103,9 +87,43 @@ export default {
 					return new Response('Not Found', { status: 404 });
 				}
 
+				const contentType = object.httpMetadata?.contentType || 'application/octet-stream';
+
+				const width = parseInt(url.searchParams.get('w') || '');
+				const height = parseInt(url.searchParams.get('h') || '');
+				const fit = url.searchParams.get('fit') || undefined;
+				const quality = parseInt(url.searchParams.get('q') || '');
+				const format = url.searchParams.get('format') || undefined;
+				const sharpen = parseFloat(url.searchParams.get('sharpen') || '');
+				const blur = parseFloat(url.searchParams.get('blur') || '');
+
+				const isImage = IMAGE_TYPES.has(contentType);
+
+				const hasTransforms = isImage && (width || height || fit || quality || format || sharpen || blur);
+
+				if (method === 'GET' && hasTransforms) {
+					const imageURL = new URL(req.url);
+
+					imageURL.search = '';
+
+					const cfImage: Record<string, any> = {};
+
+					if (width) cfImage.width = width;
+					if (height) cfImage.height = height;
+					if (fit) cfImage.fit = fit;
+					if (quality) cfImage.quality = quality;
+					if (format) cfImage.format = format;
+					if (sharpen) cfImage.sharpen = sharpen;
+					if (blur) cfImage.blur = blur;
+
+					return fetch(imageURL.toString(), {
+						cf: { image: cfImage },
+					});
+				}
+
 				const headers = new Headers();
 
-				headers.set('Content-Type', object.httpMetadata?.contentType || 'application/octet-stream');
+				headers.set('Content-Type', contentType);
 
 				headers.set('Cache-Control', 'public, max-age=31536000, immutable');
 
