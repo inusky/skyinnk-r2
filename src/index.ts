@@ -15,6 +15,9 @@ export interface Env {
 	R2: R2Bucket;
 }
 
+const MAX_FILE_SIZE = 50 * 1024 * 1024;
+const ALLOWED_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'application/pdf', 'text/plain']);
+
 export default {
 	async fetch(req: Request, env: Env): Promise<Response> {
 		const url = new URL(req.url);
@@ -33,9 +36,53 @@ export default {
 					return new Response('Request body required', { status: 400 });
 				}
 
-				const contentType = req.headers.get('content-type') || 'application/octet-stream';
+				const rawType = req.headers.get('content-type') || '';
+				const contentType = rawType.split(';')[0].trim() || 'application/octet-stream';
 
-				await env.R2.put(key, req.body, {
+				if (!ALLOWED_TYPES.has(contentType)) {
+					return new Response('Unsupported file type', {
+						status: 415,
+					});
+				}
+
+				const [bodyForCheck, bodyForUpload] = req.body.tee();
+
+				const contentLength = req.headers.get('content-length');
+
+				if (contentLength) {
+					const size = parseInt(contentLength, 10);
+
+					if (isNaN(size) || size > MAX_FILE_SIZE) {
+						return new Response('File too large', {
+							status: 413,
+						});
+					}
+				} else {
+					const reader = bodyForCheck.getReader();
+					let total = 0;
+
+					while (true) {
+						const { done, value } = await reader.read();
+						if (done) break;
+
+						total += value.byteLength;
+
+						if (total > MAX_FILE_SIZE) {
+							return new Response('File too large', {
+								status: 413,
+							});
+						}
+					}
+				}
+
+				const existing = await env.R2.get(key);
+				if (existing) {
+					return new Response('File already exists', {
+						status: 409,
+					});
+				}
+
+				await env.R2.put(key, bodyForUpload, {
 					httpMetadata: {
 						contentType,
 					},
