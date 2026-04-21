@@ -62,6 +62,8 @@ export default {
 
 				headers.set('Cache-Control', 'public, max-age=31536000, immutable');
 
+				headers.set('Access-Control-Allow-Origin', '*');
+
 				if (object.httpEtag) {
 					headers.set('ETag', object.httpEtag);
 				}
