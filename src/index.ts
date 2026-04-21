@@ -11,42 +11,82 @@
  * Learn more at https://developers.cloudflare.com/workers/
  */
 
+export interface Env {
+	R2: R2Bucket;
+}
+
 export default {
-	async fetch(req: any, env: any) {
+	async fetch(req: Request, env: Env): Promise<Response> {
 		const url = new URL(req.url);
-		const key = url.searchParams.get('key');
+
+		const method = req.method.toUpperCase();
+
+		const key = decodeURIComponent(url.pathname.replace(/^\/+/, ''));
 
 		if (!key) {
-			return new Response('Missing key', { status: 400 });
+			return new Response('Missing file path', { status: 400 });
 		}
 
 		try {
-			if (req.method === 'PUT') {
+			if (method === 'PUT') {
 				if (!req.body) {
-					return new Response('No body', { status: 400 });
+					return new Response('Request body required', { status: 400 });
 				}
 
-				await env.R2.put(key, req.body);
-				return new Response('Uploaded', { status: 201 });
-			}
+				const contentType = req.headers.get('content-type') || 'application/octet-stream';
 
-			if (req.method === 'GET') {
-				const obj = await env.R2.get(key);
+				await env.R2.put(key, req.body, {
+					httpMetadata: {
+						contentType,
+					},
+				});
 
-				if (!obj) {
-					return new Response('Not found', { status: 404 });
-				}
-
-				return new Response(obj.body, {
+				return new Response('Uploaded', {
+					status: 201,
 					headers: {
-						'Content-Type': obj.httpMetadata?.contentType || 'application/octet-stream',
+						'Cache-Control': 'no-store',
 					},
 				});
 			}
 
-			return new Response('Method not allowed', { status: 405 });
-		} catch (e: any) {
-			return new Response('R2 error: ' + e.message, { status: 500 });
+			if (method === 'GET' || method === 'HEAD') {
+				const object = await env.R2.get(key);
+
+				if (!object) {
+					return new Response('Not Found', { status: 404 });
+				}
+
+				const headers = new Headers();
+
+				headers.set('Content-Type', object.httpMetadata?.contentType || 'application/octet-stream');
+
+				headers.set('Cache-Control', 'public, max-age=31536000, immutable');
+
+				if (object.httpEtag) {
+					headers.set('ETag', object.httpEtag);
+				}
+
+				if (object.uploaded) {
+					headers.set('Last-Modified', new Date(object.uploaded).toUTCString());
+				}
+
+				if (method === 'HEAD') {
+					return new Response(null, { headers });
+				}
+
+				return new Response(object.body, { headers });
+			}
+
+			return new Response('Method Not Allowed', {
+				status: 405,
+				headers: {
+					Allow: 'GET, HEAD, PUT',
+				},
+			});
+		} catch (err: any) {
+			return new Response('Internal Error: ' + err.message, {
+				status: 500,
+			});
 		}
 	},
 };
